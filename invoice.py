@@ -1,53 +1,69 @@
 # -*- coding:utf-8 -*-
-
 """
-parse PDF invoice and extract data to Excel
+parse PDF invoice
 """
 
-import pdfplumber as pb
+import decimal
 import os
-import pandas as pd
 import re
-import sys
-import getopt
+from dataclasses import asdict, dataclass
 
-__author__ = 'yooongchun'
-__email__ = 'yooongchun@foxmail.com'
+import pandas as pd
+import pdfplumber as pb
 
 
-class Extractor(object):
-    def __init__(self, path):
-        self.file = path
+@dataclass
+class Invoice:
+    title: str = None  # 发票名称
+    machine_number: str = None  # 机器编号
+    code: str = None  # 发票代码
+    number: str = None  # 发票号码
+    date: str = None  # 开票日期
+    checksum: str = None  # 校验码
+    buyer_name: str = None  # 购买方名称
+    buyer_code: str = None  # 购买方纳税人识别号
+    buyer_account: str = None  # 购买方开户行及账号
+    buyer_address: str = None  # 购买方地址电话
+    password: str = None  # 密码
+    service_name: str = None  # 服务名称
+    count: int = None  # 数量
+    price: decimal.Decimal = None  # 单价
+    amount: decimal.Decimal = None  # 金额
+    tax_rate: str = None  # 税率
+    tax_amount: decimal.Decimal = None  # 税额
+    total_amount_str: str = None  # 价税合计(大写)
+    total_amount: decimal.Decimal = None  # 价税合计
+    seller_name: str = None
+    seller_code: str = None  # 销售方纳税人识别号
+    seller_account: str = None
+    seller_address: str = None
+    remark: str = None
+    payee: str = None  # 收款人
+    reviewer: str = None  # 审核人
+    drawer: str = None  # 开票人
 
-    @staticmethod
-    def load_files(directory):
-        """load files"""
-        paths = []
-        for file in os.walk(directory):
-            for f in file[2]:
-                path = os.path.join(file[0], f)
-                if os.path.isfile(path) and os.path.splitext(path)[1] == '.pdf':
-                    paths.append(path)
-        return paths
 
-    def _load_data(self):
-        if self.file and os.path.splitext(self.file)[1] == '.pdf':
-            pdf = pb.open(self.file)
-            page = pdf.pages[0]
-            words = page.extract_words(x_tolerance=5)
-            lines = page.lines
-            # convert coordination
-            for index, word in enumerate(words):
-                words[index]['y0'] = word['top']
-                words[index]['y1'] = word['bottom']
-            for index, line in enumerate(lines):
-                lines[index]['x1'] = line['x0']+line['width']
-                lines[index]['y0'] = line['top']
-                lines[index]['y1'] = line['bottom']
-            return {'words': words, 'lines': lines}
-        else:
-            print("file %s can't be opened." % self.file)
-            return None
+class Extractor:
+    def __init__(self):
+        pass
+
+    def _load_data(self, path):
+        if not os.path.isfile(path) or not os.path.splitext(path)[-1] == '.pdf':
+            raise ValueError(f'{path} is not a valid pdf file.')
+
+        pdf = pb.open(path)
+        page = pdf.pages[0]
+        words = page.extract_words(x_tolerance=5)
+        lines = page.lines
+        # convert coordination
+        for index, word in enumerate(words):
+            words[index]['y0'] = word['top']
+            words[index]['y1'] = word['bottom']
+        for index, line in enumerate(lines):
+            lines[index]['x1'] = line['x0']+line['width']
+            lines[index]['y0'] = line['top']
+            lines[index]['y1'] = line['bottom']
+        return {'words': words, 'lines': lines}
 
     @staticmethod
     def _fill_line(lines):
@@ -193,42 +209,42 @@ class Extractor(object):
 
     @staticmethod
     def _find_outer(words):
-        df = pd.DataFrame()
+        invoice_dict = {}
         for pos, text in words.items():
             if re.search(r'发票$', text):  # 发票名称
-                df.loc[0, '发票名称'] = text
+                invoice_dict['title'] = text.strip()
             elif re.search(r'发票代码', text):  # 发票代码
                 num = ''.join(re.findall(r'[0-9]+', text))
-                df.loc[0, '发票代码'] = num
+                invoice_dict['code'] = num.strip()
             elif re.search(r'发票号码', text):  # 发票号码
                 num = ''.join(re.findall(r'[0-9]+', text))
-                df.loc[0, '发票号码'] = num
+                invoice_dict['number'] = num.strip()
             elif re.search(r'开票日期', text):  # 开票日期
                 date = ''.join(re.findall(
                     r'[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日', text))
-                df.loc[0, '开票日期'] = date
+                invoice_dict['date'] = date
             elif '机器编号' in text and '校验码' in text:  # 校验码
                 text1 = re.search(r'校验码:\d+', text)[0]
                 num = ''.join(re.findall(r'[0-9]+', text1))
-                df.loc[0, '校验码'] = num
+                invoice_dict['checksum'] = num.strip()
                 text2 = re.search(r'机器编号:\d+', text)[0]
                 num = ''.join(re.findall(r'[0-9]+', text2))
-                df.loc[0, '机器编号'] = num
+                invoice_dict['machine_number'] = num.strip()
             elif '机器编号' in text:
                 num = ''.join(re.findall(r'[0-9]+', text))
-                df.loc[0, '机器编号'] = num
+                invoice_dict['machine_number'] = num.strip()
             elif '校验码' in text:
                 num = ''.join(re.findall(r'[0-9]+', text))
-                df.loc[0, '校验码'] = num
+                invoice_dict['checksum'] = num.strip()
             elif re.search(r'收款人', text):
                 items = re.split(r'收款人:|复核:|开票人:|销售方:', text)
                 items = [item for item in items if re.sub(
                     r'\s+', '', item) != '']
-                df.loc[0, '收款人'] = items[0] if items and len(items) > 0 else ''
-                df.loc[0, '复核'] = items[1] if items and len(items) > 1 else ''
-                df.loc[0, '开票人'] = items[2] if items and len(items) > 2 else ''
-                df.loc[0, '销售方'] = items[3] if items and len(items) > 3 else ''
-        return df
+                invoice_dict['payee'] = (items[0] if items and len(items) > 0 else '').strip()
+                invoice_dict['reviewer'] = (items[1] if items and len(items) > 1 else '').strip()
+                invoice_dict['drawer'] = (items[2] if items and len(items) > 2 else '').strip()
+                # df.loc[0, '销售方'] = items[3] if items and len(items) > 3 else ''
+        return invoice_dict
 
     @staticmethod
     def _find_and_sort_rect_in_same_line(y, groups):
@@ -236,7 +252,7 @@ class Extractor(object):
         return sorted(same_rects_k, key=lambda x: x[2][0][0])
 
     def _find_inner(self, k, words, groups, groups2, free_zone_flag=False):
-        df = pd.DataFrame()
+        invoice_dict = {}
         sort_words = sorted(words.items(), key=lambda x: x[0])
         text = [word for k, word in sort_words]
         context = ''.join(text)
@@ -247,20 +263,31 @@ class Extractor(object):
             target_index = self._index_of_y(x, same_rects_k)
             target_k = same_rects_k[target_index]
             group_context = groups2[target_k]
-            prefix = '购买方' if '购买方' in context else '销售方'
             for pos, text in group_context.items():
                 if '名称' in text:
-                    name = re.sub(r'名称:', '', text)
-                    df.loc[0, prefix+'名称'] = name
+                    name = re.sub(r'名称:', '', text).strip()
+                    if '购买方' in context:
+                        invoice_dict['buyer_name'] = name
+                    else:
+                        invoice_dict['seller_name'] = name
                 elif '纳税人识别号' in text:
-                    tax_man_id = re.sub(r'纳税人识别号:', '', text)
-                    df.loc[0, prefix+'纳税人识别号'] = tax_man_id
+                    tax_man_id = re.sub(r'纳税人识别号:', '', text).strip()
+                    if '购买方' in context:
+                        invoice_dict['buyer_code'] = tax_man_id
+                    else:
+                        invoice_dict['seller_code'] = tax_man_id
                 elif '地址、电话' in text:
-                    addr = re.sub(r'地址、电话:', '', text)
-                    df.loc[0, prefix+'地址电话'] = addr
+                    addr = re.sub(r'地址、电话:', '', text).strip()
+                    if '购买方' in context:
+                        invoice_dict['buyer_address'] = addr
+                    else:
+                        invoice_dict['seller_address'] = addr
                 elif '开户行及账号' in text:
-                    account = re.sub(r'开户行及账号:', '', text)
-                    df.loc[0, prefix+'开户行及账号'] = account
+                    account = re.sub(r'开户行及账号:', '', text).strip()
+                    if '购买方' in context:
+                        invoice_dict['buyer_account'] = account
+                    else:
+                        invoice_dict['seller_account'] = account
         elif '密码区' in context:
             y = k[1]
             x = k[2][0][0]
@@ -270,7 +297,7 @@ class Extractor(object):
             words = groups2[target_k]
             context = [v for k, v in words.items()]
             context = ''.join(context)
-            df.loc[0, '密码区'] = context
+            invoice_dict['password'] = context.strip()
         elif '价税合计' in context:
             y = k[1]
             x = k[2][0][0]
@@ -282,8 +309,8 @@ class Extractor(object):
             items = re.split(r'[(（]小写[)）]', group_context)
             b = items[0] if items and len(items) > 0 else ''
             s = items[1] if items and len(items) > 1 else ''
-            df.loc[0, '价税合计(大写)'] = b
-            df.loc[0, '价税合计(小写)'] = s
+            invoice_dict['total_amount_str'] = b.strip()
+            invoice_dict['total_amount'] = decimal.Decimal(s.split()[0].replace('¥', '')) if s.strip() else None
         elif '备注' in context:
             y = k[1]
             x = k[2][0][0]
@@ -293,12 +320,10 @@ class Extractor(object):
                 target_k = same_rects_k[target_index]
                 group_words = groups2[target_k]
                 group_context = ''.join([w for k, w in group_words.items()])
-                df.loc[0, '备注'] = group_context
-            else:
-                df.loc[0, '备注'] = ''
+                invoice_dict['remark'] = group_context.strip()
         else:
             if free_zone_flag:
-                return df, free_zone_flag
+                return {}, free_zone_flag
             y = k[1]
             x = k[2][0][0]
             same_rects_k = self._find_and_sort_rect_in_same_line(y, groups)
@@ -312,12 +337,28 @@ class Extractor(object):
                     val = [word[1] for word in words[1:]
                            ] if key and words and len(words) > 1 else ''
                     val = '\n'.join(val) if val else ''
-                    if key:
-                        df.loc[0, key] = val
-        return df, free_zone_flag
 
-    def extract(self):
-        data = self._load_data()
+                    if key is None or key.strip() == '':
+                        continue
+                    if val is None or val.strip() == '':
+                        continue
+
+                    if key == '项目名称':
+                        invoice_dict['service_name'] = val.split()[0]
+                    elif key == '数量':
+                        invoice_dict['count'] = decimal.Decimal(val)
+                    elif key == '单价':
+                        invoice_dict['price'] = decimal.Decimal(val)
+                    elif key == '金额':
+                        invoice_dict['amount'] = decimal.Decimal(val.split()[0])
+                    elif key == '税额':
+                        invoice_dict['tax_amount'] = decimal.Decimal(val.split()[0])
+                    elif key == '税率':
+                        invoice_dict['tax_rate'] = val.strip()
+        return invoice_dict, free_zone_flag
+
+    def extract(self, pdf_path):
+        data = self._load_data(pdf_path)
         words = data['words']
         lines = data['lines']
 
@@ -331,45 +372,19 @@ class Extractor(object):
         word_groups = self._put_words_into_rect(words, rects)
         word_groups2 = self._split_words_into_diff_line(word_groups)
 
-        df = pd.DataFrame()
+        invoice_dict = {}
         free_zone_flag = False
         for k, words in word_groups2.items():
             if k[0] == 'OUT':
-                df_item = self._find_outer(words)
+                items = self._find_outer(words)
             else:
-                df_item, free_zone_flag = self._find_inner(
+                items, free_zone_flag = self._find_inner(
                     k, words, word_groups, word_groups2, free_zone_flag)
-            df = pd.concat([df, df_item], axis=1)
-        return df
+            invoice_dict = {**invoice_dict, **items}
+        return Invoice(**invoice_dict) if invoice_dict else None
 
 
 if __name__ == '__main__':
-    IN_PATH = 'example'
-    OUT_PATH = 'result.xlsx'
-    # parse params
-    opts, args = getopt.getopt(sys.argv[1:], 'p:ts:', ['test', 'path=', 'save='])
-    for opt, arg in opts:
-        if opt in ['-p', '--path']:
-            IN_PATH = arg
-        elif opt in ['--test', '-t']:
-            IN_PATH = 'example'
-        elif opt in ['--save', '-s']:
-            OUT_PATH = arg
-    # run programme
-    print(f'run {"test" if IN_PATH == "example" else "extracting"} mode, load data from directory {IN_PATH}.\n{"*"*50}')
-    files_path = Extractor('').load_files(IN_PATH)
-    num = len(files_path)
-    print(f'total {num} file(s) to parse.\n{"*"*50}')
-    data = pd.DataFrame()
-    for index, file_path in enumerate(files_path):
-        print(f'{index+1}/{num}({round((index+1)/num*100, 2)}%)\t{file_path}')
-        extractor = Extractor(file_path)
-        try:
-            d = extractor.extract()
-            data = pd.concat([data, d], axis=0, sort=False, ignore_index=True)
-        except Exception as e:
-            print('file error:', file_path, '\n', e)
-    print(f'{"*"*50}\nfinish parsing, save data to {OUT_PATH}')
-    data.to_excel('result.xlsx', sheet_name='data')
-    print(f'{"*" * 50}\nALL DONE. THANK YOU FOR USING MY PROGRAMME. GOODBYE!\n{"*"*50}')
-
+    parser = Extractor()
+    d = parser.extract('/tmp/01234.pdf')
+    print(asdict(d))
